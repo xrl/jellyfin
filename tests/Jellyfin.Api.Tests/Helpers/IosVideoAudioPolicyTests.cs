@@ -77,6 +77,26 @@ public class IosVideoAudioPolicyTests
     }
 
     [Fact]
+    public async Task GetPlaybackInfo_Ios_DoesNotChangeSharedSourceForOtherSessions()
+    {
+        var shared = Source("eac3", 6);
+        var sources = new Mock<IMediaSourceManager>();
+        sources.Setup(m => m.GetPlaybackMediaSources(It.IsAny<BaseItem>(), It.IsAny<User>(), true, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { shared });
+        var helper = MediaHelper(CreateUser(true), sources.Object);
+        var ios = new DefaultHttpContext { User = Principal("Jellyfin iOS") };
+        var other = new DefaultHttpContext { User = Principal("Jellyfin Android") };
+
+        var iosResult = await helper.GetPlaybackInfo(new Movie(), null, ios.Request).ConfigureAwait(true);
+        var otherResult = await helper.GetPlaybackInfo(new Movie(), null, other.Request).ConfigureAwait(true);
+
+        Assert.False(iosResult.MediaSources[0].SupportsDirectPlay);
+        Assert.True(otherResult.MediaSources[0].SupportsDirectPlay);
+        Assert.True(shared.SupportsDirectPlay);
+        Assert.NotSame(shared, iosResult.MediaSources[0]);
+    }
+
+    [Fact]
     public void SetDeviceSpecificData_AacStereo_RemainsDirectPlayable()
     {
         var user = CreateUser(false);
@@ -216,13 +236,13 @@ public class IosVideoAudioPolicyTests
         return encoder.Object;
     }
 
-    private static MediaInfoHelper MediaHelper(User user)
+    private static MediaInfoHelper MediaHelper(User user, IMediaSourceManager? sources = null)
     {
         var users = new Mock<IUserManager>();
         users.Setup(m => m.GetUserById(It.IsAny<Guid>())).Returns(user);
         var config = new Mock<IServerConfigurationManager>();
         config.SetupGet(m => m.Configuration).Returns(new ServerConfiguration());
-        return new MediaInfoHelper(users.Object, Mock.Of<ILibraryManager>(), Mock.Of<IMediaSourceManager>(), Encoder(), config.Object,
+        return new MediaInfoHelper(users.Object, Mock.Of<ILibraryManager>(), sources ?? Mock.Of<IMediaSourceManager>(), Encoder(), config.Object,
             Mock.Of<ILogger<MediaInfoHelper>>(), Mock.Of<INetworkManager>(), Mock.Of<IDeviceManager>(), Mock.Of<IServerApplicationHost>());
     }
 

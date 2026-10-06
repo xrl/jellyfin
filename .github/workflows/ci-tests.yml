@@ -2,11 +2,15 @@ name: Tests
 on:
   push:
     branches:
-      - master
+      - main
+      - fix/ios-aac-video
   # Run tests against the forked branch, but
   # do not allow access to secrets
   # https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#workflows-in-forked-repositories
   pull_request:
+
+permissions:
+  contents: read
 
 env:
   SDK_VERSION: "10.0.x"
@@ -25,6 +29,13 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ env.SDK_VERSION }}
+
+      - name: Record SDK
+        run: dotnet --info
+
+      - name: API tests with Debug analyzers
+        if: runner.os == 'Linux'
+        run: dotnet test tests/Jellyfin.Api.Tests --configuration Debug --verbosity minimal
 
       - name: Run DotNet CLI Tests
         run: >

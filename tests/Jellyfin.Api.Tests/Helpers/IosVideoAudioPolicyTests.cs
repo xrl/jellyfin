@@ -96,6 +96,39 @@ public class IosVideoAudioPolicyTests
         Assert.NotSame(shared, iosResult.MediaSources[0]);
     }
 
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    public async Task GetPlaybackInfo_AudioOnlyDynamicEligibility_RequiresExistingPermissions(bool audioPermission, bool remuxPermission, bool expected)
+    {
+        var original = Source("eac3", 6);
+        original.SupportsTranscoding = false;
+        var user = CreateUser(audioPermission);
+        user.SetPermission(PermissionKind.EnablePlaybackRemuxing, remuxPermission);
+        var sources = new Mock<IMediaSourceManager>();
+        sources.Setup(m => m.GetPlaybackMediaSources(It.IsAny<BaseItem>(), user, true, true, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { original });
+        var helper = MediaHelper(user, sources.Object);
+        var context = new DefaultHttpContext { User = Principal("Jellyfin iOS", user.Id) };
+
+        var result = await helper.GetPlaybackInfo(new Movie(), user, context.Request).ConfigureAwait(true);
+        var source = result.MediaSources[0];
+        Assert.Equal(expected, source.SupportsTranscoding);
+        Assert.False(source.SupportsDirectPlay);
+        Assert.False(source.SupportsDirectStream);
+        Assert.False(original.SupportsTranscoding);
+        Assert.True(original.SupportsDirectStream);
+        Assert.False(user.HasPermission(PermissionKind.EnableVideoPlaybackTranscoding));
+        if (expected)
+        {
+            Negotiate(helper, source, Profile(MediaStreamProtocol.http), context.User, user);
+            Assert.Contains("AudioCodec=aac", source.TranscodingUrl, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("MaxAudioChannels=2", source.TranscodingUrl, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("VideoCodec=h264", source.TranscodingUrl, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
     [Fact]
     public void SetDeviceSpecificData_AacStereo_RemainsDirectPlayable()
     {

@@ -127,6 +127,16 @@ public class MediaInfoHelper
                     if (item.MediaType == MediaType.Video && request.HttpContext is { } context && IosVideoAudioPolicy.Applies(context.User)
                         && !IosVideoAudioPolicy.CanServeStatically(mediaSource))
                     {
+                        // A video-encoding-disabled user can still have an audio-only remux path.
+                        // StreamBuilder needs a dynamic capability after the static flags are removed.
+                        if (mediaSource.SupportsDirectStream
+                            && user is not null
+                            && user.HasPermission(PermissionKind.EnablePlaybackRemuxing)
+                            && user.HasPermission(PermissionKind.EnableAudioPlaybackTranscoding))
+                        {
+                            mediaSource.SupportsTranscoding = true;
+                        }
+
                         mediaSource.SupportsDirectPlay = false;
                         mediaSource.SupportsDirectStream = false;
                     }

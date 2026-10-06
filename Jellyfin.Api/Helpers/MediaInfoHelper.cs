@@ -124,6 +124,22 @@ public class MediaInfoHelper
                 foreach (var mediaSource in mediaSourcesClone)
                 {
                     RewritePublishedLiveStreamPath(mediaSource, request);
+                    if (item.MediaType == MediaType.Video && request.HttpContext is { } context && IosVideoAudioPolicy.Applies(context.User)
+                        && !IosVideoAudioPolicy.CanServeStatically(mediaSource))
+                    {
+                        // A video-encoding-disabled user can still have an audio-only remux path.
+                        // StreamBuilder needs a dynamic capability after the static flags are removed.
+                        if (mediaSource.SupportsDirectStream
+                            && user is not null
+                            && user.HasPermission(PermissionKind.EnablePlaybackRemuxing)
+                            && user.HasPermission(PermissionKind.EnableAudioPlaybackTranscoding))
+                        {
+                            mediaSource.SupportsTranscoding = true;
+                        }
+
+                        mediaSource.SupportsDirectPlay = false;
+                        mediaSource.SupportsDirectStream = false;
+                    }
                 }
 
                 result.MediaSources = mediaSourcesClone;
@@ -200,6 +216,18 @@ public class MediaInfoHelper
         bool alwaysBurnInSubtitleWhenTranscoding,
         IPAddress ipAddress)
     {
+        var iosVideo = item.MediaType == MediaType.Video && IosVideoAudioPolicy.Applies(claimsPrincipal);
+        if (iosVideo)
+        {
+            profile = IosVideoAudioPolicy.RestrictProfile(profile);
+            maxAudioChannels = Math.Min(maxAudioChannels ?? 2, 2);
+            if (!IosVideoAudioPolicy.CanServeStatically(mediaSource))
+            {
+                mediaSource.SupportsDirectPlay = false;
+                mediaSource.SupportsDirectStream = false;
+            }
+        }
+
         var streamBuilder = new StreamBuilder(_mediaEncoder, _logger);
 
         var options = new MediaOptions
@@ -304,7 +332,28 @@ public class MediaInfoHelper
                 }
             }
 
-            if (mediaSource.IsRemote && user.HasPermission(PermissionKind.ForceRemoteSourceTranscoding))
+            if (iosVideo)
+            {
+                if (!IosVideoAudioPolicy.CanServeStatically(mediaSource))
+                {
+                    mediaSource.SupportsDirectPlay = false;
+                    mediaSource.SupportsDirectStream = false;
+                }
+
+                var selectedAudio = mediaSource.MediaStreams.FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.Index == streamInfo.AudioStreamIndex);
+                if ((!IosVideoAudioPolicy.IsCompatible(selectedAudio)
+                        && !user.HasPermission(PermissionKind.EnableAudioPlaybackTranscoding))
+                    || (!IosVideoAudioPolicy.CanServeStatically(mediaSource)
+                        && !user.HasPermission(PermissionKind.EnablePlaybackRemuxing)
+                        && !user.HasPermission(PermissionKind.EnableVideoPlaybackTranscoding)))
+                {
+                    mediaSource.SupportsTranscoding = false;
+                    mediaSource.TranscodingUrl = null;
+                }
+            }
+
+            if (mediaSource.IsRemote && user.HasPermission(PermissionKind.ForceRemoteSourceTranscoding)
+                && (!iosVideo || mediaSource.SupportsTranscoding))
             {
                 mediaSource.SupportsDirectPlay = false;
                 mediaSource.SupportsDirectStream = false;

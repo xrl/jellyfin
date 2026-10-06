@@ -2,11 +2,15 @@ name: Format
 on:
   push:
     branches:
-      - master
+      - main
+      - fix/ios-aac-video
   # Run formatter against the forked branch, but
   # do not allow access to secrets
   # https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#workflows-in-forked-repositories
   pull_request:
+
+permissions:
+  contents: read
 
 env:
   SDK_VERSION: "10.0.x"

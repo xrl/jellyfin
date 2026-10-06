@@ -164,6 +164,12 @@ public static class StreamingHelpers
 
         encodingHelper.AttachMediaSourceInfo(state, encodingOptions, mediaSource, url);
 
+        var iosVideo = state.IsInputVideo && state.IsVideoRequest && IosVideoAudioPolicy.Applies(httpContext.User);
+        if (iosVideo)
+        {
+            IosVideoAudioPolicy.PrepareStream(state);
+        }
+
         string? containerInternal = Path.GetExtension(state.RequestedUrl);
 
         if (string.IsNullOrEmpty(containerInternal)
@@ -249,6 +255,11 @@ public static class StreamingHelpers
             {
                 state.OutputAudioCodec = state.SupportedAudioCodecs.Where(c => !EncodingHelper.LosslessAudioCodecs.Contains(c)).FirstOrDefault(mediaEncoder.CanEncodeToAudioCodec);
             }
+        }
+
+        if (iosVideo)
+        {
+            IosVideoAudioPolicy.EnforceOutput(state);
         }
 
         var ext = string.IsNullOrWhiteSpace(state.OutputContainer)

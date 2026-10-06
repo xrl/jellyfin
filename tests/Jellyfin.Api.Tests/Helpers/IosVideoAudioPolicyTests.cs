@@ -242,16 +242,30 @@ public class IosVideoAudioPolicyTests
         users.Setup(m => m.GetUserById(It.IsAny<Guid>())).Returns(user);
         var config = new Mock<IServerConfigurationManager>();
         config.SetupGet(m => m.Configuration).Returns(new ServerConfiguration());
-        return new MediaInfoHelper(users.Object, Mock.Of<ILibraryManager>(), sources ?? Mock.Of<IMediaSourceManager>(), Encoder(), config.Object,
-            Mock.Of<ILogger<MediaInfoHelper>>(), Mock.Of<INetworkManager>(), Mock.Of<IDeviceManager>(), Mock.Of<IServerApplicationHost>());
+        return new MediaInfoHelper(
+            users.Object,
+            Mock.Of<ILibraryManager>(),
+            sources ?? Mock.Of<IMediaSourceManager>(),
+            Encoder(),
+            config.Object,
+            Mock.Of<ILogger<MediaInfoHelper>>(),
+            Mock.Of<INetworkManager>(),
+            Mock.Of<IDeviceManager>(),
+            Mock.Of<IServerApplicationHost>());
     }
 
     private static void Negotiate(MediaInfoHelper helper, MediaSourceInfo source, DeviceProfile profile, ClaimsPrincipal principal, User user)
-        => helper.SetDeviceSpecificData(new Movie { Id = Guid.NewGuid() }, source, profile, principal, null, 0, source.Id, 1, null, 6,
-            "test-session", user.Id, true, true, true, true, true, false, IPAddress.Loopback);
+        => helper.SetDeviceSpecificData(new Movie { Id = Guid.NewGuid() }, source, profile, principal, null, 0, source.Id, 1, null, 6, "test-session", user.Id, true, true, true, true, true, false, IPAddress.Loopback);
 
-    private static async Task<StreamState> StreamingState(string client, string codec, int channels, TranscodingJobType type,
-        bool audioPermission = true, bool isStatic = false, bool selectedSecondTrack = false, bool requestCopy = false)
+    private static async Task<StreamState> StreamingState(
+        string client,
+        string codec,
+        int channels,
+        TranscodingJobType type,
+        bool audioPermission = true,
+        bool isStatic = false,
+        bool selectedSecondTrack = false,
+        bool requestCopy = false)
     {
         var item = new Movie { Id = Guid.NewGuid() };
         var user = CreateUser(audioPermission);
@@ -295,7 +309,17 @@ public class IosVideoAudioPolicyTests
             AllowAudioStreamCopy = true,
             AllowVideoStreamCopy = true
         };
-        return await StreamingHelpers.GetStreamingState(request, context, sources.Object, users.Object, library.Object, config.Object, encoder,
-            encoding, Mock.Of<ITranscodeManager>(), type, CancellationToken.None).ConfigureAwait(false);
+        return await StreamingHelpers.GetStreamingState(
+            request,
+            context,
+            sources.Object,
+            users.Object,
+            library.Object,
+            config.Object,
+            encoder,
+            encoding,
+            Mock.Of<ITranscodeManager>(),
+            type,
+            CancellationToken.None).ConfigureAwait(false);
     }
 }

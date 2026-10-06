@@ -120,13 +120,22 @@ public class IosVideoAudioPolicyTests
         Assert.False(original.SupportsTranscoding);
         Assert.True(original.SupportsDirectStream);
         Assert.False(user.HasPermission(PermissionKind.EnableVideoPlaybackTranscoding));
+        Negotiate(helper, source, Profile(MediaStreamProtocol.http), context.User, user);
         if (expected)
         {
-            Negotiate(helper, source, Profile(MediaStreamProtocol.http), context.User, user);
             Assert.Contains("AudioCodec=aac", source.TranscodingUrl, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("MaxAudioChannels=2", source.TranscodingUrl, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("VideoCodec=h264", source.TranscodingUrl, StringComparison.OrdinalIgnoreCase);
         }
+        else
+        {
+            Assert.False(source.SupportsTranscoding);
+            Assert.Null(source.TranscodingUrl);
+        }
+
+        var compatible = Source("aac", 2);
+        Negotiate(helper, compatible, Profile(MediaStreamProtocol.http), context.User, user);
+        Assert.True(compatible.SupportsDirectPlay);
     }
 
     [Fact]

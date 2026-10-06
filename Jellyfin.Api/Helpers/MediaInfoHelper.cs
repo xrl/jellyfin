@@ -341,8 +341,11 @@ public class MediaInfoHelper
                 }
 
                 var selectedAudio = mediaSource.MediaStreams.FirstOrDefault(s => s.Type == MediaStreamType.Audio && s.Index == streamInfo.AudioStreamIndex);
-                if (!IosVideoAudioPolicy.IsCompatible(selectedAudio)
-                    && !user.HasPermission(PermissionKind.EnableAudioPlaybackTranscoding))
+                if ((!IosVideoAudioPolicy.IsCompatible(selectedAudio)
+                        && !user.HasPermission(PermissionKind.EnableAudioPlaybackTranscoding))
+                    || (!IosVideoAudioPolicy.CanServeStatically(mediaSource)
+                        && !user.HasPermission(PermissionKind.EnablePlaybackRemuxing)
+                        && !user.HasPermission(PermissionKind.EnableVideoPlaybackTranscoding)))
                 {
                     mediaSource.SupportsTranscoding = false;
                     mediaSource.TranscodingUrl = null;

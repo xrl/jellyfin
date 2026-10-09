@@ -1,0 +1,173 @@
+name: API DLL release
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/api-dll-release.yml'
+  push:
+    tags: ['v*-rpi.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing 12.1-rpi tag on main (never creates or moves a tag)'
+        required: true
+        default: 'v12.1-rpi.1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-dll-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  SDK_IMAGE: mcr.microsoft.com/dotnet/sdk:10.0.401@sha256:e70cdb7f80b0348f5cb85f19a8f670fca061f033d57eed12fa003d58b0e06317
+  BASE_INDEX: sha256:78d3ea1207d1322471fcac39a614f004f2ccf7e878f95ab2977d752f07e4dd7e
+  BASE_AMD64: sha256:326be1010b16c92e492f6c7dd6fd105943db84ce723c73183279a1ab357b8f9b
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.source.outputs.tag }}
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve existing approved-lineage tag
+        id: source
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = pull_request ]; then TAG=v12.1-rpi.1;
+          elif [ "$EVENT" = workflow_dispatch ]; then TAG="$INPUT_TAG";
+          else TAG="$REF_NAME"; fi
+          [[ "$TAG" =~ ^v12\.1-rpi\.[0-9]+$ ]]
+          SHA=$(git rev-parse --verify "refs/tags/$TAG^{commit}")
+          git merge-base --is-ancestor "$SHA" origin/main
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact source (no fallback)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          path: source
+          persist-credentials: false
+
+      - name: Test, analyze, format and build normal IL
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --label campaign=dekopon \
+            -v "$PWD/source:/src" -w /src "$SDK_IMAGE" bash -euc '
+              dotnet --info
+              test "$(dotnet --version)" = 10.0.401
+              dotnet test tests/Jellyfin.Api.Tests --configuration Debug --verbosity minimal
+              dotnet test tests/Jellyfin.Api.Tests --configuration Release --verbosity minimal
+              dotnet format --verify-no-changes --verbosity minimal
+              dotnet build Jellyfin.Api --configuration Release -p:PublishReadyToRun=false --verbosity minimal
+            '
+          mkdir out
+          cp source/Jellyfin.Api/bin/Release/net10.0/Jellyfin.Api.dll out/
+          (cd out && sha256sum Jellyfin.Api.dll > Jellyfin.Api.dll.sha256)
+
+      - name: Audit against pinned official assembly and write provenance
+        env:
+          SOURCE_TAG: ${{ steps.source.outputs.tag }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONTAINER=$(docker create --label campaign=dekopon "jellyfin/jellyfin@$BASE_AMD64")
+          trap 'docker rm "$CONTAINER"' EXIT
+          mkdir audit
+          docker cp "$CONTAINER:/jellyfin/Jellyfin.Api.dll" audit/original.dll
+          cat > audit/audit.csproj <<'EOF'
+          <Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>
+          EOF
+          cat > audit/Program.cs <<'EOF'
+          using System;
+          using System.IO;
+          using System.Linq;
+          using System.Reflection.Metadata;
+          using System.Reflection.PortableExecutable;
+          using System.Security.Cryptography;
+          using System.Text.Json;
+          static object Inspect(string path) {
+              using var pe = new PEReader(File.OpenRead(path));
+              var md = pe.GetMetadataReader(); var a = md.GetAssemblyDefinition();
+              if (pe.PEHeaders.CorHeader.Flags != CorFlags.ILOnly || pe.PEHeaders.CoffHeader.Machine != Machine.I386 || pe.PEHeaders.CorHeader.ManagedNativeHeaderDirectory.Size != 0)
+                  throw new InvalidOperationException("Expected ordinary AnyCPU IL");
+              return new { name = md.GetString(a.Name), version = a.Version.ToString(), publicKey = Convert.ToHexString(md.GetBlobBytes(a.PublicKey)), flags = "ILOnly", machine = "I386", managedNativeHeaderSize = 0,
+                  references = md.AssemblyReferences.Select(h => { var r = md.GetAssemblyReference(h); return new { name = md.GetString(r.Name), version = r.Version.ToString(), token = Convert.ToHexString(md.GetBlobBytes(r.PublicKeyOrToken)) }; }).OrderBy(r => r.name).ToArray() };
+          }
+          var original = Inspect("/audit/original.dll"); var replacement = Inspect("/out/Jellyfin.Api.dll");
+          if (JsonSerializer.Serialize(original) != JsonSerializer.Serialize(replacement)) throw new InvalidOperationException("Official API identity/reference mismatch");
+          var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes("/out/Jellyfin.Api.dll"))).ToLowerInvariant();
+          File.WriteAllText("/out/Jellyfin.Api.provenance.json", JsonSerializer.Serialize(new {
+              schema = 1, sourceRepository = "https://github.com/xrl/jellyfin", sourceTag = Environment.GetEnvironmentVariable("SOURCE_TAG"), sourceSha = Environment.GetEnvironmentVariable("SOURCE_SHA"),
+              sdkVersion = "10.0.401", sdkImage = Environment.GetEnvironmentVariable("SDK_IMAGE"), baseIndexDigest = Environment.GetEnvironmentVariable("BASE_INDEX"),
+              baseAmd64Digest = Environment.GetEnvironmentVariable("BASE_AMD64"), sha256 = hash, architecture = "AnyCPU", assembly = replacement,
+              limitations = new[] { "v12.1-rpi.1 retains known denied-audio HTTP500 behavior; not production acceptance", "Native architecture/device media acceptance is separate" }
+          }, new JsonSerializerOptions { WriteIndented = true }));
+          EOF
+          docker run --rm --label campaign=dekopon -v "$PWD/audit:/audit" -v "$PWD/out:/out" -w /audit \
+            -e SOURCE_TAG -e SOURCE_SHA -e SDK_IMAGE -e BASE_INDEX -e BASE_AMD64 "$SDK_IMAGE" dotnet run
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: api-dll
+          path: out/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    if: github.repository == 'xrl/jellyfin' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: api-dll
+          path: out
+
+      - name: Publish public-read assets without replacing existing bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.build.outputs.tag }}
+          SOURCE_SHA: ${{ needs.build.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v12\.1-rpi\.[0-9]+$ ]]
+          [ "$(gh api "repos/$GH_REPO" --jq '.private')" = false ]
+          REMOTE_SHA=$(gh api "repos/$GH_REPO/commits/$TAG" --jq '.sha')
+          [ "$REMOTE_SHA" = "$SOURCE_SHA" ]
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            mkdir existing
+            gh release download "$TAG" --dir existing --pattern 'Jellyfin.Api*'
+            for FILE in Jellyfin.Api.dll Jellyfin.Api.dll.sha256 Jellyfin.Api.provenance.json; do
+              cmp "out/$FILE" "existing/$FILE"
+            done
+          else
+            gh release create "$TAG" out/Jellyfin.Api.dll out/Jellyfin.Api.dll.sha256 out/Jellyfin.Api.provenance.json \
+              --verify-tag --prerelease --title "API DLL $TAG" \
+              --notes 'Ordinary AnyCPU API overlay for the pinned official 12.1 image. v12.1-rpi.1 retains the known denied-audio HTTP500 defect. This asset release is not image publication or production/device acceptance.'
+          fi
+          (cd out && sha256sum -c Jellyfin.Api.dll.sha256)
+          mkdir anonymous
+          for FILE in Jellyfin.Api.dll Jellyfin.Api.dll.sha256 Jellyfin.Api.provenance.json; do
+            curl --retry 5 --retry-all-errors -fsSL "https://github.com/$GH_REPO/releases/download/$TAG/$FILE" -o "anonymous/$FILE"
+            cmp "out/$FILE" "anonymous/$FILE"
+          done

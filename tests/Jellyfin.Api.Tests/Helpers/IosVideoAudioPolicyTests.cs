@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
-using System.Security;
 using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Api.Constants;
 using Jellyfin.Api.Helpers;
+using Jellyfin.Api.Middleware;
 using Jellyfin.Data;
 using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
@@ -21,14 +22,17 @@ using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.IO;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.MediaEncoding;
+using MediaBrowser.Controller.Net;
 using MediaBrowser.Controller.Streaming;
 using MediaBrowser.Model.Configuration;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.MediaInfo;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -188,6 +192,29 @@ public class IosVideoAudioPolicyTests
     public async Task GetStreamingState_Ios_NoAudioPermission_RejectsRatherThanCopies()
     {
         await Assert.ThrowsAsync<SecurityException>(() => StreamingState("Jellyfin iOS", "eac3", 6, TranscodingJobType.Progressive, audioPermission: false));
+    }
+
+    [Fact]
+    public async Task ExceptionMiddleware_Ios_NoAudioPermission_ReturnsForbiddenWithoutMedia()
+    {
+        var context = new DefaultHttpContext();
+        using var body = new MemoryStream();
+        context.Response.Body = body;
+        var environment = new Mock<IWebHostEnvironment>();
+        environment.SetupGet(e => e.EnvironmentName).Returns(Environments.Production);
+        var middleware = new ExceptionMiddleware(
+            async _ => { await StreamingState("Jellyfin iOS", "eac3", 6, TranscodingJobType.Progressive, audioPermission: false).ConfigureAwait(false); },
+            Mock.Of<ILogger<ExceptionMiddleware>>(),
+            Mock.Of<IServerConfigurationManager>(),
+            environment.Object);
+
+        await middleware.Invoke(context).ConfigureAwait(true);
+
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        Assert.Equal("text/plain", context.Response.ContentType);
+        body.Position = 0;
+        using var reader = new StreamReader(body);
+        Assert.Equal("Error processing request.", await reader.ReadToEndAsync(TestContext.Current.CancellationToken).ConfigureAwait(true));
     }
 
     [Theory]

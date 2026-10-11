@@ -1,11 +1,11 @@
 using System;
 using System.Linq;
-using System.Security;
 using System.Security.Claims;
 using System.Text.Json;
 using Jellyfin.Api.Extensions;
 using Jellyfin.Data;
 using Jellyfin.Database.Implementations.Enums;
+using MediaBrowser.Controller.Net;
 using MediaBrowser.Controller.Streaming;
 using MediaBrowser.Model.Dlna;
 using MediaBrowser.Model.Dto;

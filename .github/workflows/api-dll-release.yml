@@ -116,7 +116,9 @@ jobs:
               schema = 1, sourceRepository = "https://github.com/xrl/jellyfin", sourceTag = Environment.GetEnvironmentVariable("SOURCE_TAG"), sourceSha = Environment.GetEnvironmentVariable("SOURCE_SHA"),
               sdkVersion = "10.0.401", sdkImage = Environment.GetEnvironmentVariable("SDK_IMAGE"), baseIndexDigest = Environment.GetEnvironmentVariable("BASE_INDEX"),
               baseAmd64Digest = Environment.GetEnvironmentVariable("BASE_AMD64"), sha256 = hash, architecture = "AnyCPU", assembly = replacement,
-              limitations = new[] { "v12.1-rpi.1 retains known denied-audio HTTP500 behavior; not production acceptance", "Native architecture/device media acceptance is separate" }
+              limitations = Environment.GetEnvironmentVariable("SOURCE_TAG") == "v12.1-rpi.1"
+                  ? new[] { "v12.1-rpi.1 retains known denied-audio HTTP500 behavior; not production acceptance", "Native architecture/device media acceptance is separate" }
+                  : new[] { "Native architecture/device media acceptance is separate" }
           }, new JsonSerializerOptions { WriteIndented = true }));
           EOF
           docker run --rm --label campaign=dekopon -v "$PWD/audit:/audit" -v "$PWD/out:/out" -w /audit \
@@ -161,9 +163,12 @@ jobs:
               cmp "out/$FILE" "existing/$FILE"
             done
           else
+            NOTES='Ordinary AnyCPU API overlay for the pinned official 12.1 image. This asset release is not image publication or production/device acceptance.'
+            if [ "$TAG" = v12.1-rpi.1 ]; then
+              NOTES='Ordinary AnyCPU API overlay for the pinned official 12.1 image. v12.1-rpi.1 retains the known denied-audio HTTP500 defect. This asset release is not image publication or production/device acceptance.'
+            fi
             gh release create "$TAG" out/Jellyfin.Api.dll out/Jellyfin.Api.dll.sha256 out/Jellyfin.Api.provenance.json \
-              --verify-tag --prerelease --title "API DLL $TAG" \
-              --notes 'Ordinary AnyCPU API overlay for the pinned official 12.1 image. v12.1-rpi.1 retains the known denied-audio HTTP500 defect. This asset release is not image publication or production/device acceptance.'
+              --verify-tag --prerelease --title "API DLL $TAG" --notes "$NOTES"
           fi
           (cd out && sha256sum -c Jellyfin.Api.dll.sha256)
           mkdir anonymous
